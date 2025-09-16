@@ -6,10 +6,13 @@ import (
 	"errors"
 	"io"
 	"strings"
+
+	"github.com/colfarl/httpfromtcp/internal/headers"
 )
 
 type Request struct {
 	RequestLine RequestLine
+	Headers		headers.Headers
 	State		int	
 }
 
