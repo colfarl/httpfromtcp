@@ -1,40 +1,13 @@
 package main
 
 import (
-	"errors"
 	"fmt"
-	"io"
 	"log"
 	"net"
-	"strings"
+
+	"github.com/colfarl/httpfromtcp/internal/request"
 )
 
-func getLinesChannel(c net.Conn) <-chan string {
-	ch := make(chan string)
-	go func() {
-		defer c.Close()
-		defer close(ch)
-		line := ""
-		for {
-			buffer := make([]byte, 8)
-			n, err := c.Read(buffer)
-			if err != nil && !errors.Is(err, io.EOF) {
-				log.Fatal(err)
-			}
-			data := string(buffer[:n])
-			splitData := strings.Split(data, "\n")
-			line += splitData[0] 
-			if len(splitData) > 1 {
-				ch <- line	
-				line = splitData[1]
-			}
-			if errors.Is(err, io.EOF) {
-				break
-			}
-		}	
-	}()
-	return ch
-}
 
 func main() {
 
@@ -51,12 +24,17 @@ func main() {
 		}
 		fmt.Println("Connection Accepted")
 
-		lines := getLinesChannel(conn)
-		for line := range lines {
-			fmt.Println(line)
+		request, err := request.RequestFromReader(conn)
+		if err != nil {
+			log.Fatal(err)
 		}
-				
-		fmt.Println("Channel Closed")
+
+		fmt.Println("Request line:")
+		fmt.Println("- Method:", request.RequestLine.Method)
+		fmt.Println("- Target:", request.RequestLine.RequestTarget)
+		fmt.Println("- Version:", request.RequestLine.HttpVersion)
+
+		fmt.Println("Connection Closed")
 	}
 }
 
