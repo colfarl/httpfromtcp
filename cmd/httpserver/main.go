@@ -2,18 +2,40 @@
 package main
 
 import (
+	"io"
 	"log"
 	"os"
 	"os/signal"
 	"syscall"
 
+	"github.com/colfarl/httpfromtcp/internal/request"
+	"github.com/colfarl/httpfromtcp/internal/response"
 	"github.com/colfarl/httpfromtcp/internal/server"
 )
 
 const port = 42069
 
+func basicHandler(w io.Writer, req *request.Request) *server.HandlerError{
+	if req.RequestLine.RequestTarget == "/yourproblem"{
+		return &server.HandlerError{
+			StatusCode: response.BadRequest,
+			Message: "Your problem is not my problem\n",
+		}
+	}
+
+	if req.RequestLine.RequestTarget == "/myproblem"{
+		return &server.HandlerError{
+			StatusCode: response.InternalError,
+			Message: "Woopsie, my bad\n",
+		}
+	}
+
+	w.Write([]byte("All good, frfr\n"))
+	return nil
+}
+
 func main() {
-	server, err := server.Serve(port)
+	server, err := server.Serve(port, basicHandler)
 	if err != nil {
 		log.Fatalf("Error starting server: %v", err)
 	}

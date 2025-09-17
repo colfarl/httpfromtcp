@@ -2,6 +2,7 @@
 package server
 
 import (
+	"bytes"
 	"fmt"
 	"io"
 	"log"
@@ -22,8 +23,20 @@ type Server struct {
 	Listener	net.Listener
 }
 
-func Serve(port int) (*Server, error) {
-	l, err := net.Listen("tcp", "127.0.0.1:42069")
+func RespondWithError(w io.Writer, herr HandlerError) {
+    // Minimal plaintext body
+    body := []byte(herr.Message)
+
+    // Write a proper status line and headers. These MUST include \r\n.
+    _ = response.WriteStatusLine(w, herr.StatusCode)
+    _ = response.WriteHeaders(w, response.GetDefaultHeaders(len(body)))
+
+    // Body
+    _, _ = w.Write(body)
+}
+
+func Serve(port int, handle Handler) (*Server, error) {
+	l, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
 	if err != nil {
 		return nil, err
 	}
@@ -35,7 +48,7 @@ func Serve(port int) (*Server, error) {
 	}
 
 	server.Available.Store(true)
-	go server.listen()
+	go server.listen(handle)
 
 	return server, nil
 }
@@ -51,7 +64,7 @@ func (s *Server) Close() error {
 	return nil
 }
 
-func (s *Server) listen() {
+func (s *Server) listen(handler Handler) {
 	for {
 		if !s.Available.Load() {
 			continue
@@ -59,20 +72,41 @@ func (s *Server) listen() {
 
 		conn, err := s.Listener.Accept()
 		if err != nil {
-			log.Print("uh oh:", err, "\n")
 			if !s.Available.Load(){
 				return
 			}
+			log.Print("uh oh:", err, "\n")
+			continue
 		}
-		go s.handle(conn)
+		go s.handle(conn, handler)
 	}
 }
 
-func (s *Server) handle(conn net.Conn) {
-	s.Available.Store(false)	
+func (s *Server) handle(conn net.Conn, handler Handler) {
+	r, err := request.RequestFromReader(conn)
+
+	if err != nil {
+		rerr := HandlerError{
+			StatusCode: response.BadRequest,
+			Message: "improperly formatted request",
+		}
+		RespondWithError(conn, rerr)
+		conn.Close()
+		return
+	}
+	
+	buffer := bytes.NewBuffer([]byte{})
+	herr := handler(buffer, r)
+	if herr != nil {
+		RespondWithError(conn, *herr)
+		conn.Close()
+		return
+	}
+	
+	body := buffer.String()	
+	headers := response.GetDefaultHeaders(len(body))
 	response.WriteStatusLine(conn, response.OK)
-	headers := response.GetDefaultHeaders(0)
 	response.WriteHeaders(conn, headers)
+	conn.Write([]byte(body))	
 	conn.Close()
-	s.Available.Store(true)	
 }
