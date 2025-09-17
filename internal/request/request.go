@@ -4,7 +4,9 @@ package request
 import (
 	"bytes"
 	"errors"
+	"fmt"
 	"io"
+	"strconv"
 	"strings"
 
 	"github.com/colfarl/httpfromtcp/internal/headers"
@@ -13,7 +15,8 @@ import (
 type Request struct {
 	RequestLine RequestLine
 	Headers		headers.Headers
-	State		int	
+	Body		[]byte
+	State		int //0 -> initialized; 1 -> parsed requestline, 2 -> parsed headers; 3 -> Done
 }
 
 type RequestLine struct {
@@ -70,7 +73,7 @@ func parseRequestLine(data []byte) (*RequestLine, int, error){
 	if err != nil {
 		return nil, 0, err
 	}
-	return requestLine, len(data), nil
+	return requestLine, len(data[:idx]) + 2, nil
 }
 
 func (r *Request) parse(data []byte) (int, error) {
@@ -82,19 +85,34 @@ func (r *Request) parse(data []byte) (int, error) {
 		} else if bytesRead == 0 {
 			return 0, nil
 		}
+
 		r.RequestLine = *requestLine
 		r.State = 1
 		return bytesRead, nil
 	case 1:
-		return 0, errors.New("trying to read in a done state")
+		bytesRead, finished, err := r.Headers.Parse(data) 	 
+		if err != nil {
+			return 0, err
+		} else if bytesRead == 0 {
+			return 0, nil
+		}
+
+		if finished {
+			r.State = 2
+		}
+
+		return bytesRead, nil
+	case 2:
+		r.Body = append(r.Body, data...)
+		return len(data), nil
 	default:
 		return 0, errors.New("unknown state")
 	}
 }
 
 
-func resizeBuffer(buffer []byte) ([]byte) {
-	if len(buffer) == cap(buffer){
+func resizeBuffer(buffer []byte, idx int) ([]byte) {
+	if idx == len(buffer){
 		newBuffer := make([]byte, cap(buffer) * 2)
 		copy(newBuffer, buffer)
 		return newBuffer
@@ -105,32 +123,148 @@ func resizeBuffer(buffer []byte) ([]byte) {
 func RequestFromReader(reader io.Reader) (*Request, error) {
 	buffer := make([]byte, bufferSize)
 	readToIndex := 0
-
 	request := Request{
 		State: 0,
+		Headers: headers.NewHeaders(),
+		Body: make([]byte, 0),
 	}
 	
+	// Request Line
 	for request.State != 1 {
-		buffer = resizeBuffer(buffer)	
+		buffer = resizeBuffer(buffer, readToIndex)	
 		bytesRead, err := reader.Read(buffer[readToIndex:])
-		if errors.Is(err, io.EOF) {
-			request.State = 1
-			break
-		} else if err != nil {
-			return nil, err	
+
+		if bytesRead > 0 {
+			readToIndex += bytesRead
+			bytesWritten, perr := request.parse(buffer[:readToIndex])
+			if perr != nil {
+				return nil, perr
+			}
+
+			if bytesWritten > 0 {
+				copy(buffer, buffer[bytesWritten:readToIndex])
+				readToIndex -= bytesWritten
+			}
 		}
 
-		readToIndex += bytesRead
-		bytesWritten, err := request.parse(buffer)
 		if err != nil {
+			if errors.Is(err, io.EOF){
+				if readToIndex > 0 {
+					bytesWritten, perr := request.parse(buffer[:readToIndex])
+					if perr != nil {
+						return nil, perr
+					}
+					if bytesWritten > 0 {
+						copy(buffer, buffer[bytesWritten:readToIndex])
+						readToIndex -= bytesWritten
+					}
+				}
+				if request.State != 1 {
+					return nil, io.ErrUnexpectedEOF
+				}	
+				break
+			}
+			return nil, err
+		}	
+	}
+	
+	// Request Headers
+	for request.State != 2 {
+		buffer = resizeBuffer(buffer, readToIndex)
+		bytesRead, err := reader.Read(buffer[readToIndex:])
+
+		if bytesRead > 0 {
+			readToIndex += bytesRead
+			bytesWritten, perr := request.parse(buffer[:readToIndex])
+			if perr != nil {
+				return nil, perr
+			}
+
+			if bytesWritten > 0 {
+				copy(buffer, buffer[bytesWritten:readToIndex])
+				readToIndex -= bytesWritten
+			}
+		}
+
+		if err != nil {
+			if readToIndex > 0 {
+				bytesWritten, perr := request.parse(buffer[:readToIndex])
+				if perr != nil {
+					return nil, perr
+				}
+				if bytesWritten > 0 {
+					copy(buffer, buffer[bytesWritten:readToIndex])
+					readToIndex -= bytesWritten
+				}
+			}
+			if errors.Is(err, io.EOF){
+				if request.State != 2 {
+					return nil, io.ErrUnexpectedEOF
+				}
+				break
+			}
+			return nil, err
+		}	
+	}
+	
+
+	length, ok := request.Headers.Get("Content-Length")
+	if !ok {
+		request.State = 3
+	}
+	
+	intLength, err := strconv.Atoi(length)
+	if err != nil && ok {
+		return nil, fmt.Errorf("improper Content-Length format")
+	}
+	for request.State != 3 {
+		buffer = resizeBuffer(buffer, readToIndex)
+		bytesRead, err := reader.Read(buffer[readToIndex:])
+		if bytesRead > 0 {
+			readToIndex += bytesRead
+			bytesWritten, perr := request.parse(buffer[:readToIndex])
+			if perr != nil {
+				return nil, perr
+			}
+
+			if bytesWritten > 0 {
+				copy(buffer, buffer[bytesWritten:readToIndex])
+				readToIndex -= bytesWritten
+			}
+		}
+
+		if err != nil {
+			if readToIndex > 0 {
+				bytesWritten, perr := request.parse(buffer[:readToIndex])
+				if perr != nil {
+					return nil, perr
+				}
+				if bytesWritten > 0 {
+					copy(buffer, buffer[bytesWritten:readToIndex])
+					readToIndex -= bytesWritten
+				}
+			}
+			if errors.Is(err, io.EOF) {
+				if len(request.Body) != intLength {
+					return nil, io.ErrUnexpectedEOF
+				}
+				break
+			}
 			return nil, err
 		}
-		if bytesWritten > 0 {
-			newBuffer := make([]byte, len(buffer))
-			copy(newBuffer, buffer[bytesWritten:])
-			readToIndex -= bytesWritten
-			buffer = newBuffer
+		
+		
+		if len(request.Body) == intLength {
+			break
+		}
+		if len(request.Body) > intLength {
+			return nil, fmt.Errorf("mismatched length and body")
 		}
 	}
+
+	if len(request.Body) != intLength {
+		return nil, fmt.Errorf("mismatched length and body")
+	}
+	request.State = 3
 	return &request, nil
 }

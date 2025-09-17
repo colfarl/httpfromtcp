@@ -44,13 +44,18 @@ func containsOnlyValidTokens(fieldName string) bool {
 	return true
 }
 
+func (h Headers) Get(key string) (string, bool) {
+	key = strings.ToLower(key)	
+	v, ok := h[key]
+	return v, ok 
+}
+
 func (h Headers) Parse(data []byte) (n int, done bool, err error){
 	idx := bytes.Index(data, []byte(crlf))
 	if idx == -1 {
 		return 0, false, nil
 	} 
 	
-	fmt.Println(string(data[:idx]))
 	if idx == 0 {
 		return len(crlf), true, nil
 	}
@@ -80,10 +85,8 @@ func (h Headers) Parse(data []byte) (n int, done bool, err error){
 		return 0, false, fmt.Errorf("invalid field name")
 	}
 	
-	fmt.Println("key value", key, value)
-
 	if v, ok := h[key]; ok{
-		h[key] = v + "," + value
+		h[key] = v + ", " + value
 	} else {
 		h[key] = value
 	}

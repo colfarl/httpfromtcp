@@ -3,7 +3,6 @@ package headers
 import (
 	"testing"
 
-	"github.com/colfarl/httpfromtcp/internal/request"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -90,7 +89,7 @@ func TestHeadersRead(t *testing.T) {
 	assert.Equal(t, len(data2), n)
 	assert.False(t, done)
 
-	assert.Equal(t, "lane-loves-go,prime-loves-zig,tj-loves-ocaml", headers["set-person"])
+	assert.Equal(t, "lane-loves-go, prime-loves-zig, tj-loves-ocaml", headers["set-person"])
 
 }
 
