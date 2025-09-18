@@ -114,6 +114,22 @@ func basicHandler(res *response.Writer, req *request.Request) {
 		return
 	}
 
+		
+	if req.RequestLine.RequestTarget == "/video" {
+		res.WriteStatusLine(200)
+		header.Set("Content-Type", "video/mp4")
+		video, err := os.ReadFile("assets/vim.mp4")
+		if err != nil {
+			log.Fatal(err)
+			return
+		}
+
+		header.Set("Content-Length", strconv.Itoa(len(video)))
+		header.Set("Connection", "close")
+		res.WriteHeaders(header)
+		res.WriteBody([]byte(video))
+		return
+	}
 	res.WriteStatusLine(200)
 	header.Set("Content-Type", "text/html")
 	header.Set("Content-Length", strconv.Itoa(len(okHTML)))
